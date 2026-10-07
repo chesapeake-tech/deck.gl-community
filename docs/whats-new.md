@@ -5,6 +5,7 @@
 - Added reusable `SplatLayer` with direct prepared assets, constant/per-row `getSource`, heterogeneous instances, affine transforms, shared refinement budgets, optical transitions and WebGL2/WebGPU rendering. Existing `source` callers remain compatible; streamed RAD and sorted scene rendering remain separate upstream work.
 - `TreeLayer` moves to native vis.gl rendering with one `getTree` traits accessor, Gaussian foliage, connected wood, eight species, explicit crops and GPU wind. The old import temporarily re-exports the same constructor.
 - Added `WorldTreeLayer` for bounded geographic streaming, continuous crown refinement and automatic frame budgets around the canonical TreeLayer.
+- Added Tree Lab, Citrus Lab, forest and synthetic world examples with recorded comparison videos and benchmark evidence.
 
 - Graph examples use the published `@loaders.gl/graphs` DOT loader. The community
   `DOTGraphLoader` and its parsing helpers have been removed.

@@ -94,7 +94,7 @@ const BROWSER_RESOLVE_CONFIG = {
 };
 
 const BROWSER_OPTIMIZE_DEPS_CONFIG = {
-  include: ['@deck.gl/mesh-layers', '@loaders.gl/arrow', 'apache-arrow', 'zod']
+  include: ['@deck.gl/mesh-layers', '@loaders.gl/arrow', 'apache-arrow', 'three', 'zod']
 };
 
 const BROWSER_TEST_EXCLUDE = ['modules/**/dist/**', '**/node_modules/**', 'dev/**/dist/**'];
@@ -211,7 +211,7 @@ const CONFIG = defineConfig({
           name: 'examples',
           environment: 'node',
           include: ['examples/**/*.{test,spec}.{js,ts,jsx,tsx}'],
-          exclude: ['examples/**/*.browser.{test,spec}.{js,ts,jsx,tsx}']
+          exclude: ['**/node_modules/**', 'examples/**/dist/**', 'examples/**/*.browser.{test,spec}.{js,ts,jsx,tsx}']
         }
       }
     ]
