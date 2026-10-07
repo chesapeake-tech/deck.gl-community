@@ -3,9 +3,10 @@
 ## Unreleased
 
 - Added reusable `SplatLayer` with direct prepared assets, constant/per-row `getSource`, heterogeneous instances, affine transforms, shared refinement budgets, optical transitions and WebGL2/WebGPU rendering. Existing `source` callers remain compatible; streamed RAD and sorted scene rendering remain separate upstream work.
-- `TreeLayer` moves to native vis.gl rendering with one `getTree` traits accessor, Gaussian foliage, connected wood, eight species, explicit crops and GPU wind. The old import temporarily re-exports the same constructor.
+- `TreeLayer` moves to native vis.gl rendering with one `getTree` traits accessor, Gaussian foliage, connected wood, eight species, explicit crops and GPU wind. Import the canonical renderer from `@deck.gl-community/layers`.
 - Added `WorldTreeLayer` for bounded geographic streaming, continuous crown refinement and automatic frame budgets around the canonical TreeLayer.
 - Added Tree Lab, Citrus Lab, forest and synthetic world examples with recorded comparison videos and benchmark evidence.
+- Migrated Seasonal Farm to the native layers package and removed the deprecated `three` workspace.
 
 - Graph examples use the published `@loaders.gl/graphs` DOT loader. The community
   `DOTGraphLoader` and its parsing helpers have been removed.
@@ -93,11 +94,11 @@
 
 - `MarkerLayer` is exported from graph-layers and has a website gallery example using workspace dependencies.
 
-- [Seasonal Farm](/examples/three/seasonal-farm) shows seven labelled plots with varied trees,
+- [Seasonal Farm](/examples/layers/seasonal-farm) shows seven labelled plots with varied trees,
   seasonal crops, and hover details.
 - [`@deck.gl-community/playground`](/docs/modules/playground) adds an installable panels-based JSON
   editor and live preview surface, with a standalone [deck.gl playground example](/examples/playground).
-- [`TreeLayer`](/docs/modules/three/api-reference/tree-layer) fixes tree orientation and
+- [`TreeLayer`](/docs/modules/layers/api-reference/tree-layer) fixes tree orientation and
   reuses pine geometry when attributes change.
 
 ## v9.4
@@ -221,7 +222,7 @@ Highlights:
 
 ### `@deck.gl-community/three`
 
-- [`TreeLayer`](/docs/modules/three/api-reference/tree-layer) improves the `palm` silhouette with a
+- [`TreeLayer`](/docs/modules/layers/api-reference/tree-layer) improves the `palm` silhouette with a
   detailed frond crown and ring-scarred trunk, and now supports WebGPU.
 
 ## v9.3
@@ -276,9 +277,9 @@ A new experimental basemap module for rendering style-defined basemaps directly 
 
 New module for THREE.js integration experiments.
 
-- [`TreeLayer`](/docs/modules/three/api-reference/tree-layer) (new) renders varied, seasonal 3D
+- [`TreeLayer`](/docs/modules/layers/api-reference/tree-layer) (new) renders varied, seasonal 3D
   forests with five tree silhouettes and optional crops. See the
-  [Seasonal Farm example](https://github.com/visgl/deck.gl-community/tree/master/examples/three/seasonal-farm).
+  [Seasonal Farm example](https://github.com/visgl/deck.gl-community/tree/master/examples/layers/seasonal-farm).
 
 ## v9.2
 
