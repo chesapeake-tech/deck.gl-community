@@ -44,3 +44,11 @@ export type {SplatHierarchy, SplatHierarchyLevel} from './splat-layer/splat-hier
 export {SplatShadowPass} from './splat-layer/splat-shadow-pass';
 export type {SplatShadowProjection} from './splat-layer/splat-shadow-pass';
 export type {SplatDataInput, PreparedSplatData, SplatInstance} from './splat-layer/splat-input';
+
+export {WorldTreeLayer} from './tree-layer/world-tree-layer';
+export type {
+  WorldTreeLayerProps,
+  TreeTileData,
+  TreeCanopyCluster,
+  TreeTileStats
+} from './tree-layer/world-tree-layer';
