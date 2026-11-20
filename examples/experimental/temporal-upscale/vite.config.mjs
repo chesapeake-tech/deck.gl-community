@@ -4,8 +4,8 @@
 //   DECK_GL_SOURCE   path of a deck.gl checkout that has the `_temporal` prop
 //   LUMA_GL_SOURCE   path of a luma.gl checkout that has `effects/temporal-upscale`
 //
-// The other luma.gl packages come from node_modules (the version that deck.gl depends on). The
-// upscaler imports `@luma.gl/core` only, and `dedupe` binds that import to the same copy.
+// The other luma.gl, loaders.gl, math.gl and probe.gl packages come from the node_modules of the
+// deck.gl checkout (see `deckDependencies`).
 
 import {defineConfig} from 'vite';
 import {resolve} from 'path';
@@ -17,12 +17,28 @@ if (!deckSource || !lumaSource) {
   throw new Error('Set DECK_GL_SOURCE and LUMA_GL_SOURCE');
 }
 
+// The deck.gl source needs the vis.gl releases that its own checkout installs. Resolve these
+// packages from the deck.gl checkout for every importer, so that only one copy loads.
+const VIS_GL_PACKAGE = /^@(luma|loaders|math|probe)\.gl\//;
+const deckImporter = resolve(deckSource, 'modules/core/src/index.ts');
+const deckDependencies = {
+  name: 'deck-source-dependencies',
+  enforce: 'pre',
+  resolveId(source, importer, options) {
+    return VIS_GL_PACKAGE.test(source)
+      ? this.resolve(source, deckImporter, {...options, skipSelf: true})
+      : null;
+  }
+};
+
 export default defineConfig(async env => {
   const base = await baseConfig(env);
   return {
     ...base,
+    plugins: [deckDependencies, ...(base.plugins ?? [])],
     resolve: {
       ...base.resolve,
+      dedupe: [],
       alias: {
         ...base.resolve.alias,
         'luma-temporal-upscale': resolve(
