@@ -8,6 +8,7 @@ import {luma} from '@luma.gl/core';
 import {webgpuAdapter} from '@luma.gl/core/webgpu';
 import {getStandaloneExampleContainer} from '../../mount-example';
 import {getScene, SCENES, type SceneId} from '../ambient-occlusion/scenes';
+import {createMovingLayers} from './moving-objects';
 import {
   TemporalUpscaleEffect,
   type TemporalDebugView,
@@ -17,6 +18,10 @@ import {
 /** The settings of the demo. The panel and the URL parameters set them. */
 type Settings = {
   scene: SceneId;
+  motion: boolean;
+  objvel: boolean;
+  kernel?: number;
+  responsiveness?: number;
   /** Scale of the scene buffers: 1, 0.75 or 0.5. */
   scale: number;
   /** Temporal anti-aliasing at the render size. */
@@ -50,7 +55,17 @@ const number = (name: string, fallback: number) =>
     ? Number(parameters.get(name))
     : fallback;
 
+/** Empty or invalid inputs leave the library default in effect. */
+function getOptionalNumber(value: string | null, min: number, max: number): number | undefined {
+  if (value === null || value.trim() === '' || !Number.isFinite(Number(value))) return undefined;
+  return Math.max(min, Math.min(max, Number(value)));
+}
+
 const settings: Settings = {
+  motion: parameters.get('motion') === '1',
+  objvel: flag('objvel', true),
+  kernel: getOptionalNumber(parameters.get('kernel'), 0.5, 1),
+  responsiveness: getOptionalNumber(parameters.get('resp'), 0, 1),
   scene: getScene(parameters.get('scene')).id,
   scale: number('scale', 0.5),
   taa: flag('taa', true),
@@ -79,6 +94,22 @@ const device = await luma.createDevice({
     alphaMode: 'premultiplied'
   }
 });
+
+const motionEpoch = performance.now();
+let frozenMotionTime = getOptionalNumber(parameters.get('motiontime'), -Infinity, Infinity) ?? null;
+
+/** Returns the frozen scene time or elapsed wall-clock seconds. */
+function getMotionTime(): number {
+  return frozenMotionTime ?? (performance.now() - motionEpoch) / 1000;
+}
+
+/** Freezes motion at a time in seconds; null resumes the wall clock. */
+function setMotionTime(time: number | null): void {
+  if (time !== null && !Number.isFinite(time))
+    throw new Error('Motion time must be finite or null');
+  frozenMotionTime = time;
+  updateMotion();
+}
 
 let scene = getScene(settings.scene);
 let viewState: MapViewState = {...scene.viewState};
@@ -126,6 +157,8 @@ function getSettingsProps() {
     antialiasing: settings.taa,
     upscaling: settings.upscale,
     sharpness: settings.sharpness,
+    kernelSharpness: settings.kernel,
+    responsiveness: settings.responsiveness,
     debugView: settings.debug
   });
   return {
@@ -134,6 +167,7 @@ function getSettingsProps() {
     _temporal: {
       jitter: isTemporal() || settings.forceJitter,
       velocity: true,
+      objectVelocity: settings.objvel,
       renderScale: settings.scale
     },
     // The accumulation needs new frames when the camera is still.
@@ -170,7 +204,16 @@ const deck = new Deck<MapView>({
   layers: [],
   ...(getSettingsProps() as object)
 });
-deck.setProps({layers: createLayers()});
+let sceneLayers = createLayers();
+function updateMotion(): void {
+  deck.setProps({
+    layers: [
+      ...sceneLayers,
+      ...(settings.motion ? createMovingLayers(scene, getMotionTime(), settings.objvel) : [])
+    ]
+  });
+}
+updateMotion();
 
 function applySettings(changes: Partial<Settings> = {}): void {
   const previousScene = settings.scene;
@@ -178,12 +221,18 @@ function applySettings(changes: Partial<Settings> = {}): void {
   if (settings.scene !== previousScene) {
     scene = getScene(settings.scene);
     viewState = {...scene.viewState};
-    deck.setProps({viewState, layers: createLayers()});
+    sceneLayers = createLayers();
+    deck.setProps({viewState});
   }
+  updateMotion();
   deck.setProps(getSettingsProps() as object);
   updatePanel();
   const url = new URL(location.href);
   for (const [name, value] of Object.entries({
+    motion: Number(settings.motion),
+    objvel: Number(settings.objvel),
+    kernel: settings.kernel,
+    resp: settings.responsiveness,
     scene: settings.scene,
     scale: settings.scale,
     taa: Number(settings.taa),
@@ -195,7 +244,8 @@ function applySettings(changes: Partial<Settings> = {}): void {
     aonoise: Number(settings.aoNoise),
     orbit: settings.orbit
   })) {
-    url.searchParams.set(name, String(value));
+    if (value === undefined) url.searchParams.delete(name);
+    else url.searchParams.set(name, String(value));
   }
   history.replaceState(null, '', url);
 }
@@ -213,6 +263,7 @@ function orbit(now: number): void {
   if (settings.orbit !== 0) {
     setViewState({...viewState, bearing: (viewState.bearing ?? 0) + settings.orbit * seconds});
   }
+  if (settings.motion && frozenMotionTime === null) updateMotion();
   requestAnimationFrame(orbit);
 }
 requestAnimationFrame(orbit);
@@ -233,6 +284,12 @@ panel.innerHTML = `
   <label><input type="checkbox" name="upscale"> Temporal upscaler</label><br>
   <label>Sharpening <input type="range" name="sharpness" min="0" max="1" step="0.05">
     <span name="sharpnessValue"></span></label><br>
+  <label><input type="checkbox" name="motion"> Moving objects</label><br>
+  <label><input type="checkbox" name="objvel"> Per-object velocity</label><br>
+  <label>Kernel sharpness <input type="number" name="kernel" min="0.5" max="1" step="0.05"
+    placeholder="Default" style="width:75px"></label><br>
+  <label>Responsiveness <input type="number" name="responsiveness" min="0" max="1" step="0.05"
+    placeholder="Default" style="width:75px"></label><br>
   <label><input type="checkbox" name="velocity"> Show velocity</label><br>
   <label><input type="checkbox" name="ao"> Ambient occlusion (CORTAO)</label><br>
   <label><input type="checkbox" name="showAO"> Show occlusion only</label><br>
@@ -241,6 +298,10 @@ panel.innerHTML = `
   <div name="stats" style="color:#555;line-height:1.3;white-space:pre"></div>`;
 const get = <T extends Element>(name: string) => panel.querySelector(`[name="${name}"]`) as T;
 const controls = {
+  motion: get<HTMLInputElement>('motion'),
+  objvel: get<HTMLInputElement>('objvel'),
+  kernel: get<HTMLInputElement>('kernel'),
+  responsiveness: get<HTMLInputElement>('responsiveness'),
   scene: get<HTMLSelectElement>('scene'),
   scale: get<HTMLSelectElement>('scale'),
   taa: get<HTMLInputElement>('taa'),
@@ -259,6 +320,11 @@ if (flag('controls', true)) {
 }
 
 function updatePanel(): void {
+  controls.motion.checked = settings.motion;
+  controls.objvel.checked = settings.objvel;
+  controls.kernel.value = settings.kernel === undefined ? '' : String(settings.kernel);
+  controls.responsiveness.value =
+    settings.responsiveness === undefined ? '' : String(settings.responsiveness);
   controls.scene.value = settings.scene;
   controls.scale.value = String(settings.scale);
   controls.taa.checked = settings.taa;
@@ -272,6 +338,12 @@ function updatePanel(): void {
   controls.orbit.checked = settings.orbit !== 0;
 }
 updatePanel();
+controls.motion.onchange = () => applySettings({motion: controls.motion.checked});
+controls.objvel.onchange = () => applySettings({objvel: controls.objvel.checked});
+controls.kernel.onchange = () =>
+  applySettings({kernel: getOptionalNumber(controls.kernel.value, 0.5, 1)});
+controls.responsiveness.onchange = () =>
+  applySettings({responsiveness: getOptionalNumber(controls.responsiveness.value, 0, 1)});
 controls.scene.onchange = () => applySettings({scene: controls.scene.value as SceneId});
 controls.scale.onchange = () => applySettings({scale: Number(controls.scale.value)});
 controls.taa.onchange = () => applySettings({taa: controls.taa.checked});
@@ -363,6 +435,8 @@ async function measureFrames(count: number): Promise<number> {
   settings,
   applySettings,
   setViewState,
+  setMotionTime,
+  getMotionTime,
   renderFrames,
   runPath,
   measureFrames,

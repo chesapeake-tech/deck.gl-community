@@ -20,6 +20,8 @@ import {TemporalUpscaler} from 'luma-temporal-upscale';
  */
 export type TemporalFrame = {
   frameIndex: number;
+  targetId?: string;
+  objectVelocity?: boolean;
   renderScale: number;
   renderSize: [number, number];
   outputSize: [number, number];
@@ -45,10 +47,22 @@ export type TemporalUpscaleEffectProps = {
   upscaling?: boolean;
   /** Sharpening strength, from 0 (off) to 1. */
   sharpness?: number;
+  /** Reconstruction kernel sharpness, from 0.5 to 1. Undefined uses the library default. */
+  kernelSharpness?: number;
+  /** History responsiveness, from 0 to 1. Undefined uses the library default. */
+  responsiveness?: number;
   /** Debug view. */
   debugView?: TemporalDebugView;
   /** Called at the start of each frame with the temporal inputs, or `null` without them. */
   onFrame?: (frame: TemporalFrame | null) => void;
+};
+
+type TargetState = {
+  upscaler: TemporalUpscaler | null;
+  sizes: string;
+  intermediate: Framebuffer | null;
+  resetHistory: boolean;
+  lastUsed: number;
 };
 
 const BLIT_WGSL = /* wgsl */ `\
@@ -70,17 +84,17 @@ fn fragmentMain(inputs: FragmentInputs) -> @location(0) vec4f {
  */
 export class TemporalUpscaleEffect implements Effect {
   id: string;
-  props: Required<Omit<TemporalUpscaleEffectProps, 'onFrame'>> &
-    Pick<TemporalUpscaleEffectProps, 'onFrame'>;
+  props: Required<
+    Omit<TemporalUpscaleEffectProps, 'onFrame' | 'kernelSharpness' | 'responsiveness'>
+  > &
+    Pick<TemporalUpscaleEffectProps, 'onFrame' | 'kernelSharpness' | 'responsiveness'>;
   readonly useInPicking = false;
 
   private device: Device | null = null;
   private blit: ClipSpace | null = null;
-  private upscaler: TemporalUpscaler | null = null;
-  private upscalerSizes = '';
-  /** The target of the accumulation at the render size, when the output is larger. */
-  private intermediate: Framebuffer | null = null;
-  private resetHistory = true;
+  private states = new Map<string, TargetState>();
+  /** Counts render calls across all targets; target-local frame indices can restart. */
+  private frame = 0;
 
   constructor(props: TemporalUpscaleEffectProps = {}) {
     this.props = {
@@ -113,7 +127,9 @@ export class TemporalUpscaleEffect implements Effect {
       previous.antialiasing !== this.props.antialiasing ||
       previous.upscaling !== this.props.upscaling
     ) {
-      this.resetHistory = true;
+      for (const state of this.states.values()) {
+        state.resetHistory = true;
+      }
     }
   }
 
@@ -126,6 +142,8 @@ export class TemporalUpscaleEffect implements Effect {
     const output = (options.target !== undefined ? options.target : options.swapBuffer) ?? null;
     const colorTexture = options.inputBuffer.colorAttachments[0].texture;
     const {temporal} = options;
+    const targetId = temporal?.targetId ?? 'default';
+    const state = this.getState(targetId);
     const {antialiasing, upscaling, debugView} = this.props;
     const isTemporal =
       (antialiasing || upscaling || debugView !== 'none') &&
@@ -133,7 +151,7 @@ export class TemporalUpscaleEffect implements Effect {
       temporal.depthTexture &&
       TemporalUpscaler.isSupported(device);
     if (!isTemporal) {
-      this.resetHistory = true;
+      state.resetHistory = true;
       this.copy(colorTexture, output);
       return output;
     }
@@ -145,33 +163,36 @@ export class TemporalUpscaleEffect implements Effect {
     const isSameSize = renderSize[0] === targetSize[0] && renderSize[1] === targetSize[1];
     // Without `upscaling`, the pass accumulates at the render size.
     const accumulateSize = upscaling ? targetSize : renderSize;
-    const sizes = [...renderSize, ...accumulateSize].join();
-    if (!this.upscaler || this.upscalerSizes !== sizes) {
-      this.upscaler?.destroy();
-      this.upscaler = new TemporalUpscaler(device, {
-        id: `${this.id}-upscaler`,
+    const sizes = [...renderSize, ...accumulateSize, colorTexture.props.format].join();
+    if (!state.upscaler || state.sizes !== sizes) {
+      state.upscaler?.destroy();
+      state.upscaler = new TemporalUpscaler(device, {
+        id: `${this.id}-${targetId}-upscaler`,
         renderSize,
         outputSize: accumulateSize,
         outputFormat: colorTexture.props.format
       });
-      this.upscalerSizes = sizes;
+      state.sizes = sizes;
+      state.resetHistory = true;
     }
     const direct = upscaling || isSameSize;
-    const target = direct ? output : this.getIntermediate(renderSize, colorTexture);
-    this.upscaler.render({
+    const target = direct ? output : this.getIntermediate(state, renderSize, colorTexture);
+    state.upscaler.render({
       colorTexture,
       depthTexture: temporal.depthTexture!,
       velocityTexture: temporal.velocityTexture!,
       jitter: temporal.jitter,
       target,
       sharpness: this.props.sharpness,
-      reset: temporal.reset || this.resetHistory,
+      kernelSharpness: this.props.kernelSharpness,
+      responsiveness: this.props.responsiveness,
+      reset: temporal.reset || state.resetHistory,
       debugView,
       clear: true
     });
-    this.resetHistory = false;
+    state.resetHistory = false;
     if (!direct) {
-      this.copy(this.intermediate!.colorAttachments[0].texture, output);
+      this.copy(state.intermediate!.colorAttachments[0].texture, output);
     }
     return output;
   }
@@ -179,10 +200,34 @@ export class TemporalUpscaleEffect implements Effect {
   cleanup(): void {
     this.blit?.destroy();
     this.blit = null;
-    this.upscaler?.destroy();
-    this.upscaler = null;
-    this.destroyIntermediate();
+    for (const state of this.states.values()) {
+      this.destroyState(state);
+    }
+    this.states.clear();
+    this.frame = 0;
     this.device = null;
+  }
+
+  private getState(targetId: string): TargetState {
+    const frame = ++this.frame;
+    for (const [id, state] of this.states) {
+      if (frame - state.lastUsed >= 120) {
+        this.destroyState(state);
+        this.states.delete(id);
+      }
+    }
+    let state = this.states.get(targetId);
+    if (!state) {
+      state = {upscaler: null, sizes: '', intermediate: null, resetHistory: true, lastUsed: frame};
+      this.states.set(targetId, state);
+    }
+    state.lastUsed = frame;
+    return state;
+  }
+
+  private destroyState(state: TargetState): void {
+    state.upscaler?.destroy();
+    this.destroyIntermediate(state);
   }
 
   /** Draws a texture to a framebuffer with bilinear filtering. */
@@ -201,11 +246,15 @@ export class TemporalUpscaleEffect implements Effect {
     renderPass.end();
   }
 
-  private getIntermediate(size: [number, number], like: Texture): Framebuffer {
+  private getIntermediate(state: TargetState, size: [number, number], like: Texture): Framebuffer {
     const [width, height] = size;
-    if (this.intermediate?.width !== width || this.intermediate?.height !== height) {
-      this.destroyIntermediate();
-      this.intermediate = this.device!.createFramebuffer({
+    if (
+      state.intermediate?.width !== width ||
+      state.intermediate?.height !== height ||
+      state.intermediate.colorAttachments[0].texture.props.format !== like.props.format
+    ) {
+      this.destroyIntermediate(state);
+      state.intermediate = this.device!.createFramebuffer({
         id: `${this.id}-intermediate`,
         width,
         height,
@@ -219,12 +268,12 @@ export class TemporalUpscaleEffect implements Effect {
         ]
       });
     }
-    return this.intermediate;
+    return state.intermediate;
   }
 
-  private destroyIntermediate(): void {
-    this.intermediate?.colorAttachments[0].texture.destroy();
-    this.intermediate?.destroy();
-    this.intermediate = null;
+  private destroyIntermediate(state: TargetState): void {
+    state.intermediate?.colorAttachments[0].texture.destroy();
+    state.intermediate?.destroy();
+    state.intermediate = null;
   }
 }
