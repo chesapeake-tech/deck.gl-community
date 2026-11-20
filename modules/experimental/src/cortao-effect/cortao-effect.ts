@@ -194,7 +194,11 @@ export class CORTAOEffect implements Effect {
       return;
     }
     const canvasContext = options.canvasContext || this.device.getDefaultCanvasContext();
-    const [width, height] = canvasContext.getDrawingBufferSize();
+    // With the experimental deck.gl `_temporal` prop, the scene buffers can be smaller than the
+    // drawing buffer. The capture must have the same size as the scene buffers.
+    const renderSize = (options as {temporal?: {renderSize?: [number, number]}}).temporal
+      ?.renderSize;
+    const [width, height] = renderSize ?? canvasContext.getDrawingBufferSize();
     if (width <= 0 || height <= 0) {
       return;
     }
